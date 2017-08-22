@@ -715,6 +715,9 @@ namespace mpark {
       template <typename... Args>
       inline explicit constexpr alt(in_place_t, Args &&... args)
           : value(lib::forward<Args>(args)...) {}
+      template <typename... Args>
+      inline explicit constexpr alt(in_place_aggr_t, Args &&... args)
+          : value{lib::forward<Args>(args)...} {}
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
@@ -740,10 +743,20 @@ namespace mpark {
                                               Args &&... args)             \
         : head_(in_place_t{}, lib::forward<Args>(args)...) {}              \
                                                                            \
+    template <typename... Args>                                            \
+    inline explicit constexpr recursive_union(in_place_aggr_index_t<0>,         \
+                                              Args &&... args)             \
+        : head_(in_place_aggr_t{}, lib::forward<Args>(args)...) {}              \
+\
     template <std::size_t I, typename... Args>                             \
     inline explicit constexpr recursive_union(in_place_index_t<I>,         \
                                               Args &&... args)             \
         : tail_(in_place_index_t<I - 1>{}, lib::forward<Args>(args)...) {} \
+        \
+    template <std::size_t I, typename... Args>                             \
+    inline explicit constexpr recursive_union(in_place_aggr_index_t<I>,         \
+                                              Args &&... args)             \
+        : tail_(in_place_aggr_index_t<I - 1>{}, lib::forward<Args>(args)...) {} \
                                                                            \
     recursive_union(const recursive_union &) = default;                    \
     recursive_union(recursive_union &&) = default;                         \
@@ -781,6 +794,11 @@ namespace mpark {
       template <std::size_t I, typename... Args>
       inline explicit constexpr base(in_place_index_t<I>, Args &&... args)
           : data_(in_place_index_t<I>{}, lib::forward<Args>(args)...),
+            index_(I) {}
+
+      template <std::size_t I, typename... Args>
+      inline explicit constexpr base(in_place_aggr_index_t<I>, Args &&... args)
+          : data_(in_place_aggr_index_t<I>{}, lib::forward<Args>(args)...),
             index_(I) {}
 
       inline constexpr bool valueless_by_exception() const noexcept {
@@ -907,6 +925,13 @@ namespace mpark {
         return a.value;
       }
 
+      template <std::size_t I, typename T, typename... Args>
+      inline static T &construct_alt_aggr(alt<I, T> &a, Args &&... args) {
+        ::new (static_cast<void *>(lib::addressof(a)))
+            alt<I, T>(in_place_aggr_t{}, lib::forward<Args>(args)...);
+        return a.value;
+      }
+
       template <typename Rhs>
       inline static void generic_construct(constructor &lhs, Rhs &&rhs) {
         lhs.destroy();
@@ -1018,6 +1043,17 @@ namespace mpark {
                                           lib::forward<Args>(args)...)) {
         this->destroy();
         auto &result = this->construct_alt(access::base::get_alt<I>(*this),
+                                           lib::forward<Args>(args)...);
+        this->index_ = I;
+        return result;
+      }
+
+      template <std::size_t I, typename... Args>
+      inline /* auto & */ auto emplace_aggr(Args &&... args)
+          -> decltype(this->construct_alt_aggr(access::base::get_alt<I>(*this),
+                                          lib::forward<Args>(args)...)) {
+        this->destroy();
+        auto &result = this->construct_alt_aggr(access::base::get_alt<I>(*this),
                                            lib::forward<Args>(args)...);
         this->index_ = I;
         return result;
@@ -1330,6 +1366,15 @@ namespace mpark {
 
     template <
         std::size_t I,
+        typename... Args,
+        typename T = lib::type_pack_element_t<I, Ts...>>
+    inline explicit constexpr variant(
+        in_place_aggr_index_t<I>,
+        Args &&... args) noexcept
+        : impl_(in_place_aggr_index_t<I>{}, lib::forward<Args>(args)...) {}
+
+    template <
+        std::size_t I,
         typename Up,
         typename... Args,
         typename T = lib::type_pack_element_t<I, Ts...>,
@@ -1357,6 +1402,15 @@ namespace mpark {
         Args &&... args) noexcept(std::is_nothrow_constructible<T,
                                                                 Args...>::value)
         : impl_(in_place_index_t<I>{}, lib::forward<Args>(args)...) {}
+
+    template <
+        typename T,
+        typename... Args,
+        std::size_t I = detail::find_index_sfinae<T, Ts...>::value>
+    inline explicit constexpr variant(
+        in_place_aggr_type_t<T>,
+        Args &&... args) noexcept
+        : impl_(in_place_aggr_index_t<I>{}, lib::forward<Args>(args)...) {}
 
     template <
         typename T,
@@ -1408,6 +1462,14 @@ namespace mpark {
 
     template <
         std::size_t I,
+        typename... Args,
+        typename T = lib::type_pack_element_t<I, Ts...>>
+    inline T &emplace_aggr(Args &&... args) {
+      return impl_.template emplace_aggr<I>(lib::forward<Args>(args)...);
+    }
+
+    template <
+        std::size_t I,
         typename Up,
         typename... Args,
         typename T = lib::type_pack_element_t<I, Ts...>,
@@ -1426,6 +1488,14 @@ namespace mpark {
         lib::enable_if_t<std::is_constructible<T, Args...>::value, int> = 0>
     inline T &emplace(Args &&... args) {
       return impl_.template emplace<I>(lib::forward<Args>(args)...);
+    }
+
+    template <
+        typename T,
+        typename... Args,
+        std::size_t I = detail::find_index_sfinae<T, Ts...>::value>
+    inline T &emplace_aggr(Args &&... args) {
+      return impl_.template emplace_aggr<I>(lib::forward<Args>(args)...);
     }
 
     template <
